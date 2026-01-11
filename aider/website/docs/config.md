@@ -28,7 +28,7 @@ Using a `.aider.conf.yml` file:
 dark-mode: true
 ```
 
-By setting an environgment variable:
+By setting an environment variable:
 
 ```
 export AIDER_DARK_MODE=true
@@ -40,5 +40,5 @@ Using an `.env` file:
 AIDER_DARK_MODE=true
 ```
 
-{% include env-keys-tip.md %}
+{% include keys.md %}
 

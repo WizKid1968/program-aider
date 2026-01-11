@@ -1,90 +1,156 @@
-<canvas id="blameChart" width="800" height="450" style="margin-top: 20px"></canvas>
+<div class="chart-container">
+    <canvas id="blameChart" style="margin-top: 20px"></canvas>
+</div>
+<div class="chart-container">
+    <canvas id="linesChart" style="margin-top: 20px"></canvas>
+</div>
+
+<style>
+.chart-container {
+    position: relative;
+    width: 100%;
+    height: 300px;
+}
+</style>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/moment"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    var ctx = document.getElementById('blameChart').getContext('2d');
+    var blameCtx = document.getElementById('blameChart').getContext('2d');
+    var linesCtx = document.getElementById('linesChart').getContext('2d');
+    
+    var labels = [{% for row in site.data.blame %}'{{ row.end_tag }}',{% endfor %}];
+    
     var blameData = {
+        labels: labels,
         datasets: [{
-            label: 'Aider\'s Contribution to Each Release',
-            data: [
-                {% for row in site.data.blame %}
-                {
-                    x: '{{ row.end_date }}',
-                    y: {{ row.aider_percentage }},
-                    r: Math.sqrt({{ row.aider_total }}) * 1.5,
-                    label: '{{ row.end_tag }}',
-                    percentage: {{ row.aider_percentage }},
-                    lines: {{ row.aider_total }}
-                },
-                {% endfor %}
-            ],
-            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+            label: 'Aider\'s percent of new code by release',
+            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.aider_percentage }}, lines: {{ row.aider_total }}, end_date: '{{ row.end_date }}' },{% endfor %}],
+            backgroundColor: 'rgba(54, 162, 235, 0.8)',
             borderColor: 'rgba(54, 162, 235, 1)',
             borderWidth: 1
         }]
     };
 
-    var blameChart = new Chart(ctx, {
-        type: 'bubble',
+    var linesData = {
+        labels: labels,
+        datasets: [{
+            label: 'Aider',
+            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.aider_total }} },{% endfor %}],
+            backgroundColor: 'rgba(54, 162, 235, 0.8)',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 1
+        },
+        {
+            label: 'Human',
+            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.total_lines | minus: row.aider_total }} },{% endfor %}],
+            backgroundColor: 'rgba(200, 200, 200, 0.8)',
+            borderColor: 'rgba(200, 200, 200, 1)',
+            borderWidth: 1
+        }]
+    };
+
+    var blameChart = new Chart(blameCtx, {
+        type: 'bar',
         data: blameData,
         options: {
+            maintainAspectRatio: false,
             scales: {
                 x: {
-                    type: 'time',
-                    time: {
-                        unit: 'month',
-                        displayFormats: {
-                            month: 'MMM YYYY'
-                        }
-                    },
+                    type: 'category',
                     title: {
                         display: true,
-                        text: 'Release date'
+                        text: 'Version'
                     },
                     ticks: {
                         maxRotation: 45,
                         minRotation: 45
-                    },
-                    min: moment('{{ site.data.blame | first | map: "end_date" | first }}').subtract(1, 'month'),
-                    max: moment('{{ site.data.blame | last | map: "end_date" | first }}').add(1, 'month')
+                    }
                 },
                 y: {
                     title: {
                         display: true,
-                        text: 'Aider Contribution (% of code)'
+                        text: 'Percent of new code'
                     },
                     beginAtZero: true
                 }
             },
             plugins: {
+                legend: {
+                    display: false
+                },
                 tooltip: {
                     callbacks: {
                         label: function(context) {
-                            return `${context.raw.label}: ${Math.round(context.raw.percentage)}% (${context.raw.lines} lines)`;
-                        }
-                    }
-                },
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        generateLabels: function(chart) {
-                            return [{
-                                text: 'Bubble size: Lines of code contributed by aider',
-                                fillStyle: 'rgba(54, 162, 235, 0.2)',
-                                strokeStyle: 'rgba(54, 162, 235, 1)',
-                                lineWidth: 1,
-                                hidden: false,
-                                index: 0
-                            }];
+                            var label = 'Aider\'s contribution';
+                            var value = context.parsed.y || 0;
+                            var lines = context.raw.lines || 0;
+                            return `${label}: ${Math.round(value)}% (${lines} lines)`;
+                        },
+                        afterLabel: function(context) {
+                            let date = context.raw.end_date || 'n/a';
+                            return `Date: ` + date;
                         }
                     }
                 },
                 title: {
                     display: true,
-                    text: 'Aider\'s Contribution to Each Release',
+                    text: 'Percent of new code written by aider, by release',
+                    font: {
+                        size: 16
+                    }
+                }
+            }
+        }
+    });
+
+    var linesChart = new Chart(linesCtx, {
+        type: 'bar',
+        data: linesData,
+        options: {
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'category',
+                    stacked: true,
+                    title: {
+                        display: true,
+                        text: 'Version'
+                    },
+                    ticks: {
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                },
+                y: {
+                    stacked: true,
+                    title: {
+                        display: true,
+                        text: 'Lines of new code'
+                    },
+                    beginAtZero: true
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'chartArea',
+                    reverse: true
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            var label = context.dataset.label;
+                            var value = context.parsed.y || 0;
+                            return `${label}: ${value}`;
+                        }
+                    }
+                },
+                title: {
+                    display: true,
+                    text: 'Lines of new code, by release',
                     font: {
                         size: 16
                     }

@@ -29,27 +29,57 @@ This is how most linters normally operate.
 By default, aider will lint any files which it edits.
 You can disable this with the `--no-auto-lint` switch.
 
+### Per-language linters
+
+To specify different linters based on the code language, use `--lint "language: cmd"`.
+
+### Code formatting "linters"
+
+Many people use code formatters as linters, to format and pretty their code.
+These tools sometimes return non-zero exit codes if they make changes, which will
+confuse aider into thinking there's an actual lint error that needs to be fixed.
+
+You can use formatters by wrapping them in a shell script like this and setting
+the script as your linter.
+
+```bash
+#!/bin/bash
+
+# Run it twice.
+#
+# First attempt may reformat/modify files, and therefore exit with non-zero status.
+#
+# Second attempt will not do anything and exit 0 unless there's a real problem beyond
+# the code formatting that was completed.
+
+pre-commit run --files "$@" >/dev/null \
+    || pre-commit run --files "$@"
+```
+
 ## Testing
 
-You can configure aider to run your test suite
-after each time the AI edits your code
-using the `--test-cmd <cmd>` switch.
-
+You can run tests with `/test <test-command>`.
 Aider will run the test command without any arguments.
 If there are test errors, aider expects the
 command to print them on stdout/stderr
 and return a non-zero exit code.
-This is how most test tools normally operate.
 
-To have aider automatically run the test command,
-use the `--auto-test` switch.
+Aider will try and fix any errors
+if the command returns a non-zero exit code.
+
+You can configure aider to run your test suite
+after each time the AI edits your code
+using the `--test-cmd <test-command>` and
+`--auto-test` switch.
+
+
 
 ## Compiled languages
 
 If you want to have aider compile code after each edit, you
 can use the lint and test commands to achieve this.
 
-- You might want want to recompile each file which was modified
+- You might want to recompile each file which was modified
 to check for compile errors.
 To do this,
 provide a `--lint-cmd` which both lints and compiles the file.

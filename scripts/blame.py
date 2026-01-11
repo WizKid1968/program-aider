@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import subprocess
+import sys
 from collections import defaultdict
 from datetime import datetime
 from operator import itemgetter
@@ -10,6 +12,19 @@ import semver
 import yaml
 from tqdm import tqdm
 
+website_files = [
+    "aider/website/index.html",
+    "aider/website/share/index.md",
+    "aider/website/_includes/head_custom.html",
+    "aider/website/_includes/home.css",
+    "aider/website/docs/leaderboards/index.md",
+]
+
+exclude_files = [
+    "aider/website/install.ps1",
+    "aider/website/install.sh",
+]
+
 
 def blame(start_tag, end_tag=None):
     commits = get_all_commit_hashes_between_tags(start_tag, end_tag)
@@ -17,10 +32,21 @@ def blame(start_tag, end_tag=None):
 
     authors = get_commit_authors(commits)
 
-    pats = "*.py *.scm *.sh **Dockerfile **Gemfile .github/workflows/*.yml".split()
-    files = []
-    for pat in pats:
-        files += run(["git", "ls-files", pat]).strip().split("\n")
+    revision = end_tag if end_tag else "HEAD"
+    files = run(["git", "ls-tree", "-r", "--name-only", revision]).strip().split("\n")
+    test_files = [f for f in files if f.startswith("tests/fixtures/languages/") and "/test." in f]
+    files = [
+        f
+        for f in files
+        if f.endswith((".js", ".py", ".scm", ".sh", "Dockerfile", "Gemfile"))
+        or (f.startswith(".github/workflows/") and f.endswith(".yml"))
+        or (f.startswith("aider/resources/") and f.endswith(".yml"))
+        or f in website_files
+        or f in test_files
+    ]
+    files = [f for f in files if not f.endswith("prompts.py")]
+    files = [f for f in files if not f.startswith("tests/fixtures/watch")]
+    files = [f for f in files if f not in exclude_files]
 
     all_file_counts = {}
     grand_total = defaultdict(int)
@@ -63,8 +89,13 @@ def get_commit_authors(commits):
     commit_to_author = dict()
     for commit in commits:
         author = run(["git", "show", "-s", "--format=%an", commit]).strip()
-        commit_message = run(["git", "show", "-s", "--format=%s", commit]).strip()
-        if commit_message.lower().startswith("aider:"):
+        subject = run(["git", "show", "-s", "--format=%s", commit]).strip()
+        full_message = run(["git", "show", "-s", "--format=%B", commit]).strip()
+
+        lower_subject = subject.lower()
+        lower_full = full_message.lower()
+
+        if lower_subject.startswith("aider:") or "co-authored-by: aider" in lower_full:
             author += " (aider)"
         commit_to_author[commit] = author
     return commit_to_author
@@ -135,8 +166,31 @@ def main():
             return
 
     if args.all_since:
-        results = process_all_tags_since(args.start_tag)
-        yaml_output = yaml.dump(results, sort_keys=True)
+        new_results = process_all_tags_since(args.start_tag)
+
+        # If output file exists, read and update it
+        existing_results = []
+        if args.output and os.path.exists(args.output):
+            with open(args.output, "r") as f:
+                existing_results = yaml.safe_load(f) or []
+
+        # Create a map of start_tag->end_tag to result for existing entries
+        existing_map = {(r["start_tag"], r["end_tag"]): i for i, r in enumerate(existing_results)}
+
+        # Update or append new results
+        for new_result in new_results:
+            key = (new_result["start_tag"], new_result["end_tag"])
+            if key in existing_map:
+                # Replace existing entry
+                existing_results[existing_map[key]] = new_result
+            else:
+                # Append new entry
+                existing_results.append(new_result)
+
+        # Sort results by start_tag
+        existing_results.sort(key=lambda x: semver.Version.parse(x["start_tag"][1:]))
+
+        yaml_output = yaml.dump(existing_results, sort_keys=True)
     else:
         all_file_counts, grand_total, total_lines, aider_total, aider_percentage, end_date = blame(
             args.start_tag, args.end_tag
@@ -171,9 +225,35 @@ def main():
 def get_counts_for_file(start_tag, end_tag, authors, fname):
     try:
         if end_tag:
-            text = run(["git", "blame", f"{start_tag}..{end_tag}", "--", fname])
+            text = run(
+                [
+                    "git",
+                    "blame",
+                    "-M100",  # Detect moved lines within a file with 100% similarity
+                    "-C100",  # Detect moves across files with 100% similarity
+                    "-C",  # Increase detection effort
+                    "-C",  # Increase detection effort even more
+                    "--abbrev=9",
+                    f"{start_tag}..{end_tag}",
+                    "--",
+                    fname,
+                ]
+            )
         else:
-            text = run(["git", "blame", f"{start_tag}..HEAD", "--", fname])
+            text = run(
+                [
+                    "git",
+                    "blame",
+                    "-M100",  # Detect moved lines within a file with 100% similarity
+                    "-C100",  # Detect moves across files with 100% similarity
+                    "-C",  # Increase detection effort
+                    "-C",  # Increase detection effort even more
+                    "--abbrev=9",
+                    f"{start_tag}..HEAD",
+                    "--",
+                    fname,
+                ]
+            )
         if not text:
             return None
         text = text.splitlines()
@@ -186,10 +266,14 @@ def get_counts_for_file(start_tag, end_tag, authors, fname):
             line_counts[author] += 1
 
         return dict(line_counts)
-    except subprocess.CalledProcessError:
-        # print(f"Warning: Unable to blame file {fname}. It may have been added after {start_tag} "
-        #       f"or removed before {end_tag or 'HEAD'}.", file=sys.stderr)
-        return None
+    except subprocess.CalledProcessError as e:
+        if "no such path" in str(e).lower():
+            # File doesn't exist in this revision range, which is okay
+            return None
+        else:
+            # Some other error occurred
+            print(f"Warning: Unable to blame file {fname}. Error: {e}", file=sys.stderr)
+            return None
 
 
 def get_all_tags_since(start_tag):
